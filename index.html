@@ -1,0 +1,125 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CYBER-CHAIN // 3D VISUALIZER</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <link rel="stylesheet" href="https://pyscript.net/releases/2023.11.1/core.css" />
+    <script type="module" src="https://pyscript.net/releases/2023.11.1/core.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Orbitron', sans-serif; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; justify-content: space-between; padding: 20px; box-sizing: border-box; }
+        .panel { pointer-events: auto; background: rgba(0, 20, 40, 0.85); border: 1px solid #00f0ff; box-shadow: 0 0 15px #00f0ff; padding: 20px; width: 350px; backdrop-filter: blur(5px); color: #00f0ff; transform: skew(-5deg); }
+        h1 { margin: 0 0 15px 0; font-size: 24px; text-shadow: 0 0 10px #00f0ff; text-transform: uppercase; }
+        .input-group { margin-bottom: 10px; transform: skew(5deg); }
+        label { display: block; font-size: 10px; color: #fff; letter-spacing: 2px; }
+        input { width: 100%; background: rgba(0,0,0,0.5); border: 1px solid #0055ff; color: #fff; padding: 8px; font-family: 'Orbitron'; outline: none; transition: 0.3s; box-sizing: border-box; }
+        input:focus { border-color: #00f0ff; box-shadow: 0 0 10px #0055ff inset; }
+        button { width: 100%; padding: 12px; margin-top: 5px; background: transparent; border: 2px solid #00f0ff; color: #00f0ff; font-family: 'Orbitron'; font-weight: bold; cursor: pointer; text-transform: uppercase; letter-spacing: 2px; transition: 0.2s; }
+        button:hover { background: #00f0ff; color: #000; box-shadow: 0 0 20px #00f0ff; }
+        button.danger { border-color: #ff0055; color: #ff0055; }
+        button.danger:hover { background: #ff0055; color: #000; box-shadow: 0 0 20px #ff0055; }
+        #logs { height: 200px; overflow-y: auto; font-size: 11px; color: #00ffaa; border-top: 1px solid #00ffaa; margin-top: 15px; padding-top: 5px; text-shadow: 0 0 2px #00ffaa; scrollbar-width: thin; }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid rgba(0, 255, 170, 0.2); }
+        #loader { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #000; z-index: 999; display: flex; align-items: center; justify-content: center; flex-direction: column; color: #00f0ff; font-size: 30px; letter-spacing: 10px; }
+    </style>
+</head>
+<body>
+    <div id="loader">INITIALIZING NEURAL LINK...</div>
+    <div id="canvas-container"></div>
+    <div id="ui-layer">
+        <div class="panel">
+            <h1>TX TERMINAL</h1>
+            <div class="input-group"><label>SENDER IDENTITY</label><input type="text" id="sender" value="Alice"></div>
+            <div class="input-group"><label>RECIPIENT TARGET</label><input type="text" id="recipient" value="Bob"></div>
+            <div class="input-group"><label>QUANTUM FLUX (BTC)</label><input type="number" id="amount" value="5.0"></div>
+            <button py-click="create_tx_click">BROADCAST TRANSACTION</button>
+            <div style="margin-top: 30px;">
+                <label>MINING NODE ID</label><input type="text" id="miner" value="Miner_X" style="margin-bottom: 10px;">
+                <button class="danger" py-click="mine_block_click">INITIATE MINING SEQUENCE</button>
+            </div>
+        </div>
+        <div class="panel">
+            <h1>SYSTEM STATUS</h1>
+            <div id="stats"><p>BLOCK HEIGHT: <span id="height-disp" style="color:#fff">0</span></p><p>MEMPOOL SIZE: <span id="mempool-disp" style="color:#fff">0</span></p></div>
+            <div id="logs"><div class="log-entry">> SYSTEM READY.</div></div>
+            <button py-click="download_data" style="margin-top:20px; border-color: #ffee00; color: #ffee00;">DUMP MEMORY (JSON)</button>
+        </div>
+    </div>
+    <script>
+        const scene = new THREE.Scene(); scene.fog = new THREE.FogExp2(0x000510, 0.02);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight); document.getElementById('canvas-container').appendChild(renderer.domElement);
+        scene.add(new THREE.AmbientLight(0x404040));
+        const gridLight = new THREE.PointLight(0x00f0ff, 1, 100); gridLight.position.set(0, 10, 0); scene.add(gridLight);
+        scene.add(new THREE.GridHelper(200, 50, 0xff0055, 0x0055ff));
+        camera.position.set(0, 5, 15); camera.lookAt(0, 2, 0);
+        let particles = [], blocks = [];
+        window.spawnTxParticle = () => {
+            const sphere = new THREE.Mesh(new THREE.IcosahedronGeometry(0.3, 0), new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true }));
+            sphere.position.set((Math.random()-0.5)*10, Math.random()*5+1, (Math.random()-0.5)*10);
+            scene.add(sphere); particles.push(sphere);
+        };
+        window.animateMining = (height) => {
+            if(particles.length === 0) return;
+            particles.forEach(p => { new TWEEN.Tween(p.position).to({x:0, y:height*1.5+1, z:0}, 500).easing(TWEEN.Easing.Quadratic.In).onComplete(()=>scene.remove(p)).start(); });
+            particles = [];
+            setTimeout(() => {
+                const cube = new THREE.Mesh(new THREE.BoxGeometry(2, 1.5, 2), new THREE.MeshPhongMaterial({ color: 0x001133, transparent: true, opacity: 0.8, shininess: 100 }));
+                cube.add(new THREE.LineSegments(new THREE.EdgesGeometry(cube.geometry), new THREE.LineBasicMaterial({ color: 0x00f0ff })));
+                cube.position.set(0, 20, 0); scene.add(cube); blocks.push(cube);
+                new TWEEN.Tween(cube.position).to({ y: (blocks.length-1)*1.6+0.75 }, 800).easing(TWEEN.Easing.Bounce.Out).start();
+            }, 600);
+        };
+        function animate(time) { requestAnimationFrame(animate); TWEEN.update(time); particles.forEach(p=>{p.rotation.x+=0.02;p.rotation.y+=0.02;}); const t=Date.now()*0.0002; camera.position.x=Math.cos(t)*15; camera.position.z=Math.sin(t)*15; camera.lookAt(0, (blocks.length*1.5)/2, 0); renderer.render(scene, camera); }
+        animate();
+        window.onload = () => document.getElementById('loader').style.display = 'none';
+        window.updateStats = (h, m) => { document.getElementById('height-disp').innerText = h; document.getElementById('mempool-disp').innerText = m; };
+        window.logJS = (msg) => { const d=document.getElementById('logs'); d.innerHTML+=`<div class="log-entry">> ${msg}</div>`; d.scrollTop=d.scrollHeight; }
+    </script>
+    <script type="py">
+        import time, random, json
+        from pyscript import document, window
+        class Transaction:
+            def __init__(self, tx_id, inputs, outputs): self.tx_id, self.inputs, self.outputs = tx_id, inputs, outputs
+        class UTXO:
+            def __init__(self, tx_id, idx, amt, owner): self.tx_id, self.index, self.amount, self.owner = tx_id, idx, amt, owner
+        utxo_set, mempool, blockchain, spent_in_mempool = {}, [], [], set()
+        def log(msg): window.logJS(msg)
+        def add_utxo(tx, idx, amt, owner): utxo_set[(tx, idx)] = UTXO(tx, idx, amt, owner)
+        add_utxo("genesis", 0, 50.0, "Alice"); add_utxo("genesis", 1, 50.0, "Bob")
+        def create_tx_click(e):
+            s, r = document.getElementById("sender").value, document.getElementById("recipient").value
+            try: amt = float(document.getElementById("amount").value)
+            except: return log("INVALID QTY")
+            u_list = [u for u in utxo_set.values() if u.owner == s]
+            tot, inps = 0.0, []
+            for u in u_list:
+                if (u.tx_id, u.index) not in spent_in_mempool:
+                    inps.append(u); tot += u.amount
+                    if tot >= amt: break
+            if tot < amt: return log(f"NO FUNDS. HAVE {tot}")
+            tx = Transaction(f"tx_{int(time.time()*1000)}", inps, [{"addr": r, "val": amt}])
+            if tot > amt: tx.outputs.append({"addr": s, "val": tot - amt})
+            mempool.append(tx); 
+            for i in inps: spent_in_mempool.add((i.tx_id, i.index))
+            window.spawnTxParticle(); log(f"TX: {s}->{r} ({amt})"); window.updateStats(len(blockchain), len(mempool))
+        def mine_block_click(e):
+            if not mempool: return log("MEMPOOL EMPTY")
+            m = document.getElementById("miner").value
+            for tx in mempool:
+                for i in tx.inputs: 
+                    if (i.tx_id, i.index) in utxo_set: del utxo_set[(i.tx_id, i.index)]
+                for idx, out in enumerate(tx.outputs): add_utxo(tx.tx_id, idx, out["val"], out["addr"])
+            h = len(blockchain)+1; add_utxo(f"coinbase_{h}", 0, 12.5, m)
+            blockchain.append({"h": h, "m": m}); mempool.clear(); spent_in_mempool.clear()
+            window.animateMining(h); log(f"BLOCK {h} MINED: {m}"); window.updateStats(len(blockchain), len(mempool))
+        def download_data(e): print(json.dumps(blockchain))
+    </script>
+</body>
+</html>
